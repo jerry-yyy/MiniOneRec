@@ -1,0 +1,23 @@
+{
+  "geo_mode": "residual",
+  "geo_weight": 0.0,
+  "geo_nproj": 256,
+  "geo_num_frequencies": 17,
+  "geo_tmax": 3.0,
+  "geo_eps": 0.000001,
+  "geo_projection_chunk": 64,
+  "geo_seed": 952024,
+  "seed": 2024,
+  "loader_seed": 752024,
+  "device": "cpu",
+  "num_workers": 0,
+  "num_emb_list": [8, 8, 8],
+  "e_dim": 4,
+  "layers": [24, 16],
+  "kmeans_init": false,
+  "batch_size": 16,
+  "epochs": 2,
+  "warmup_epochs": 0,
+  "eval_step": 1,
+  "save_last": true
+}

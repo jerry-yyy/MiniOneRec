@@ -1,0 +1,9 @@
+{
+  "geo_mode": "none",
+  "geo_weight": 0.0,
+  "seed": 2024,
+  "geo_seed": 952024,
+  "loader_seed": 752024,
+  "num_workers": 0,
+  "save_last": true
+}

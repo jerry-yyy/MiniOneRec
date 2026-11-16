@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 /.venv-sid/
 /outputs/sid/
+/artifacts/geosid/
+/outputs/geosid/
+/research/geosid/local/
+/.pytest_cache/

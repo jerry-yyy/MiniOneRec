@@ -7,14 +7,20 @@ import torch
 import numpy as np
 from time import time
 import logging
+import json
 
 from torch.utils.data import DataLoader
 
-from datasets import EmbDataset
-from models.rqvae import RQVAE
-from trainer import  Trainer
+try:
+    from .datasets import EmbDataset
+    from .models.rqvae import RQVAE
+    from .trainer import Trainer
+except ImportError:
+    from datasets import EmbDataset
+    from models.rqvae import RQVAE
+    from trainer import Trainer
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Index")
 
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
@@ -48,13 +54,35 @@ def parse_args():
 
     parser.add_argument('--save_limit', type=int, default=5)
     parser.add_argument("--ckpt_dir", type=str, default="", help="output directory for model")
+    parser.add_argument('--seed', type=int, default=2024)
+    parser.add_argument('--geo_mode', choices=['none', 'global', 'residual'], default='none')
+    parser.add_argument('--geo_weight', type=float, default=0.0)
+    parser.add_argument('--geo_nproj', type=int, default=256)
+    parser.add_argument('--geo_num_frequencies', type=int, default=17)
+    parser.add_argument('--geo_tmax', type=float, default=3.0)
+    parser.add_argument('--geo_eps', type=float, default=1e-6)
+    parser.add_argument('--geo_projection_chunk', type=int, default=64)
+    parser.add_argument('--geo_seed', type=int, default=2024)
+    parser.add_argument('--resume', default=None, help='Trusted epoch-boundary checkpoint')
+    parser.add_argument('--save_last', action='store_true', help='Save each completed epoch for exact recovery')
+    parser.add_argument('--loader_seed', type=int, default=None, help='Optional dedicated DataLoader RNG')
+    parser.add_argument('--config', default=None, help='JSON defaults; explicit CLI options take precedence')
 
-    return parser.parse_args()
+    preliminary, _ = parser.parse_known_args(argv)
+    if preliminary.config:
+        with open(preliminary.config, encoding='utf-8') as handle:
+            defaults = json.load(handle)
+        unknown = set(defaults) - {action.dest for action in parser._actions}
+        if unknown:
+            parser.error(f'Unknown configuration fields: {sorted(unknown)}')
+        parser.set_defaults(**defaults)
+    return parser.parse_args(argv)
 
 
-if __name__ == '__main__':
+def main(argv=None):
     """fix the random seed"""
-    seed = 2024
+    args = parse_args(argv)
+    seed = args.seed
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -62,7 +90,6 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    args = parse_args()
     print("=================================================")
     print(args)
     print("=================================================")
@@ -84,14 +111,22 @@ if __name__ == '__main__':
                   kmeans_iters=args.kmeans_iters,
                   sk_epsilons=args.sk_epsilons,
                   sk_iters=args.sk_iters,
+                  **{key: value for key, value in vars(args).items() if key.startswith('geo_')},
                   )
     print(model)
+    generator = None if args.loader_seed is None else torch.Generator().manual_seed(args.loader_seed)
     data_loader = DataLoader(data,num_workers=args.num_workers,
                              batch_size=args.batch_size, shuffle=True,
-                             pin_memory=True)
+                             pin_memory=True, generator=generator)
     trainer = Trainer(args,model, len(data_loader))
+    if args.resume:
+        trainer.load_checkpoint(args.resume, data_loader)
     best_loss, best_collision_rate = trainer.fit(data_loader)
 
     print("Best Loss",best_loss)
     print("Best Collision Rate", best_collision_rate)
+
+
+if __name__ == '__main__':
+    main()
 

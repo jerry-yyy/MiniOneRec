@@ -1,0 +1,14 @@
+{
+  "geo_mode": "residual",
+  "geo_weight": 0.0,
+  "geo_nproj": 256,
+  "geo_num_frequencies": 17,
+  "geo_tmax": 3.0,
+  "geo_eps": 0.000001,
+  "geo_projection_chunk": 64,
+  "seed": 2024,
+  "geo_seed": 952024,
+  "loader_seed": 752024,
+  "num_workers": 0,
+  "save_last": true
+}
