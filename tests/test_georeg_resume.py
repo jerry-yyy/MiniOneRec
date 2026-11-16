@@ -261,6 +261,37 @@ class ResumeTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["weighted_geo"], .31 * aux["geo_loss"].item(), places=7)
         assert_nested_equal(self, direct_model.state_dict(), model.state_dict())
 
+    def test_checkpoint_deserialization_keeps_adam_step_and_host_rng_on_cpu(self):
+        kwargs = model_args(geo_mode="residual", geo_weight=.2)
+        data = RecordingDataset()
+        loader = DataLoader(data, batch_size=9, shuffle=True,
+                            generator=torch.Generator().manual_seed(79))
+        trainer = Trainer(trainer_args(self.root / "source"), RQVAE(**kwargs), len(loader))
+        trainer.train_data = loader
+        trainer._train_epoch(loader, 0)
+        path = trainer._save_checkpoint(0, ckpt_file="boundary.pth")
+        resumed = Trainer(trainer_args(self.root / "restored"), RQVAE(**kwargs), len(loader))
+        # Exercise the accelerator-target deserialization decision without
+        # allocating a CUDA tensor or requiring CUDA in the CPU test suite.
+        # The actual-device test separately checks moment placement and updates.
+        resumed.device = torch.device("cuda:0")
+        original_load = torch.load
+
+        def require_cpu_load(*args, **kwargs):
+            self.assertEqual(kwargs.get("map_location"), "cpu")
+            return original_load(*args, **kwargs)
+
+        with patch("rq.trainer.torch.load", side_effect=require_cpu_load):
+            summary = resumed.load_checkpoint(path, loader)
+        self.assertTrue(summary["exact_epoch_resume"])
+        self.assertTrue(resumed.optimizer.state)
+        for parameter, state in resumed.optimizer.state.items():
+            self.assertEqual(state["step"].device.type, "cpu")
+            self.assertEqual(state["exp_avg"].device, parameter.device)
+            self.assertEqual(state["exp_avg_sq"].device, parameter.device)
+        self.assertEqual(torch.get_rng_state().device.type, "cpu")
+        self.assertEqual(resumed.model.georeg.get_rng_state().device.type, "cpu")
+
 
 if __name__ == "__main__":
     unittest.main()

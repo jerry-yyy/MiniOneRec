@@ -237,7 +237,12 @@ class Trainer(object):
         internal RNG state is not saved. Local research uses num_workers=0.
         No permutation/cursor is saved, so arbitrary-step exact resume is unsupported.
         """
-        state = torch.load(path, map_location=self.device, weights_only=False)
+        # Deserialize on CPU: AdamW's noncapturable/nonfused scalar `step`
+        # normally lives there, and optimizer.load_state_dict deliberately does
+        # not relocate it. The model copies weights to its existing device and
+        # the optimizer relocates moment tensors according to parameter policy.
+        # CPU deserialization also avoids transferring host RNG states to CUDA.
+        state = torch.load(path, map_location='cpu', weights_only=False)
         boundary = state.get('resume_boundary')
         if boundary not in (None, 'epoch'):
             raise ValueError('Only completed epoch-boundary checkpoints support resume')
