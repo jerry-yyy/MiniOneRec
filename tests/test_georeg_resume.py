@@ -339,6 +339,21 @@ class ResumeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "configuration"):
             changed.load_checkpoint(path, loader)
 
+    def test_best_loss_checkpoint_has_finalized_selection_metrics(self):
+        loader = DataLoader(RecordingDataset(), batch_size=9, shuffle=True)
+        args = trainer_args(self.root / "source", epochs=1, warmup_epochs=0)
+        trainer = Trainer(args, RQVAE(**model_args()), len(loader))
+        with patch.object(trainer, "_valid_epoch", return_value=.25):
+            expected = trainer.fit(loader)
+        path = Path(trainer.ckpt_dir) / trainer.best_loss_ckpt
+        saved = torch.load(path, weights_only=False)
+        self.assertEqual(saved['best_collision_rate'], .25)
+        restored = Trainer(trainer_args(self.root / "restored", epochs=1, warmup_epochs=0),
+                           RQVAE(**model_args()), len(loader))
+        result = restored.load_checkpoint(path, loader)
+        self.assertTrue(result['exact_epoch_resume'])
+        self.assertEqual(restored.fit(loader), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

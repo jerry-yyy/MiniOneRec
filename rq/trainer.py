@@ -409,12 +409,18 @@ class Trainer(object):
                 valid_start_time = time()
                 collision_rate = self._valid_epoch(data)
 
-                if train_loss < self.best_loss:
+                improved_loss = train_loss < self.best_loss
+                improved_collision = collision_rate < self.best_collision_rate
+                # Every checkpoint here represents the completed evaluation.
+                # Finalize both scalars before either best checkpoint is saved.
+                if improved_loss:
                     self.best_loss = train_loss
+                if improved_collision:
+                    self.best_collision_rate = collision_rate
+                if improved_loss:
                     self._save_checkpoint(epoch=epoch_idx, ckpt_file=self.best_loss_ckpt)
 
-                if collision_rate < self.best_collision_rate:
-                    self.best_collision_rate = collision_rate
+                if improved_collision:
                     cur_eval_step = 0
                     self._save_checkpoint(epoch_idx, collision_rate=collision_rate,
                                           ckpt_file=self.best_collision_ckpt)
