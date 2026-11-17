@@ -82,6 +82,11 @@ def parse_args(argv=None):
 def main(argv=None):
     """fix the random seed"""
     args = parse_args(argv)
+    data = EmbDataset(args.data_path)
+    if args.geo_mode != 'none' and args.geo_weight > 0:
+        if args.batch_size < 2 or len(data) < 2 or len(data) % args.batch_size == 1:
+            raise ValueError('GeoReg requires at least two items in every batch; '
+                             'choose a batch_size without a singleton tail. No items are dropped.')
     seed = args.seed
     random.seed(seed)
     np.random.seed(seed)
@@ -97,7 +102,6 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG)
 
     """build dataset"""
-    data = EmbDataset(args.data_path)
     model = RQVAE(in_dim=data.dim,
                   num_emb_list=args.num_emb_list,
                   e_dim=args.e_dim,

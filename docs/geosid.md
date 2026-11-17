@@ -51,7 +51,7 @@ loss.backward()
 
 `aux` contains the unweighted scalar `geo_loss`, differentiable `geo_level_losses`, and detached `geo_residual_rms` and `geo_scales` logs. It is returned explicitly; no graph-bearing cross-step attribute is used. When mode is `none` or weight is zero, residual reconstruction and geometric RNG sampling are skipped completely. Auxiliary loss is then zero and the per-level arrays are empty.
 
-Training geometric arithmetic explicitly disables enclosing autocast and uses FP32 for FP16/BF16/FP32 inputs. FP64 inputs retain FP64 for numerical tests. `GeoReg` has a dedicated CPU `torch.Generator`; its state is available through `get_rng_state()` and `set_rng_state()`. It does not consume the global model, dropout, NumPy/KMeans or DataLoader streams. Training samples directions on each geometric call. Pass `geo_directions=U` to `RQVAE.forward` or `directions=U` to `GeoReg` for fixed diagnostics; fixed directions do not advance the training generator.
+Frequency constants remain FP64 on CPU until each call, so casting the enclosing model to FP16/BF16 cannot round them. Training geometric arithmetic explicitly disables enclosing autocast and uses FP32 for FP16/BF16/FP32 inputs. FP64 inputs retain FP64 for numerical tests. `GeoReg` has a dedicated CPU `torch.Generator`; its state is available through `get_rng_state()` and `set_rng_state()`. It does not consume the global model, dropout, NumPy/KMeans or DataLoader streams. Training samples directions on each geometric call. Pass `geo_directions=U` to `RQVAE.forward` or `directions=U` to `GeoReg` for fixed diagnostics; fixed directions do not advance the training generator.
 
 | Option | Default |
 |---|---:|
@@ -98,19 +98,21 @@ python -c "import numpy as np; np.save('smoke.npy', np.random.default_rng(1).nor
 python -m sid_generation.geosid train --config configs/geosid/smoke.json --data_path smoke.npy --ckpt_dir outputs/geosid/smoke --geo_weight 0.03
 ```
 
+Enabled geometry requires at least two items in every batch. The training CLI rejects singleton batches/tails before model construction; choose a compatible batch size. No data is silently dropped, and this check is skipped when geometry is disabled or its weight is zero.
+
 The smoke weight is arbitrary and only exercises the software path; it is not an experimental calibration or a recommended research setting. Official comparisons retain the common three-by-256 codebook architecture.
 
 ## Checkpoints and recovery
 
 Old RQVAE state dictionaries load with `strict=True`, without new required keys. Legacy outer training checkpoints are accepted as non-exact continuation and default to disabled geometry when GeoReg configuration is absent. Legacy inference and exact new-training recovery are separate contracts.
 
-New outer checkpoints save model/optimizer/scheduler state, completed zero-based epoch, update count, configuration, VQ `initted` flags, Python/NumPy/PyTorch RNG, initialized CUDA RNG, independent GeoReg RNG, DataLoader/sampler RNG states and sharing topology, loader layout, and the optional budget-ledger reference. Restoring `initted` prevents KMeans from overwriting loaded codebooks. Configuration and completeness checks precede restoration.
+New outer checkpoints save model/optimizer/scheduler state, completed zero-based epoch, update count, configuration, VQ `initted` flags, Python/NumPy/PyTorch RNG, initialized CUDA RNG, independent GeoReg RNG, DataLoader/sampler RNG states and sharing topology, loader layout, standard sampler settings, and explicit model/training behavior configuration. No research or budget-runner dependency is included. Restoring `initted` prevents KMeans from overwriting loaded codebooks. Configuration and completeness checks precede restoration. Earlier local experimental epoch checkpoints lacking this complete contract are rejected as incomplete rather than certified exact; their model weights remain strictly loadable for inference. Original upstream outer checkpoints still load as non-exact continuation.
 
 ```sh
 python -m sid_generation.geosid train --config configs/geosid/residual.json --geo_weight LAMBDA --data_path catalog.npy --ckpt_dir outputs/geosid/resumed --resume CHECKPOINT.pth
 ```
 
-Exact continuation is tested at completed epoch boundaries with `num_workers=0`, unchanged data/order, architecture, schedule and batch layout. Dedicated and global-default loader RNG modes are both covered. Keep the same dataset content: the core checkpoint checks length/layout but does not authenticate a dataset hash. The research workflow additionally records hashes. Persistent worker RNG is unsupported; other multiworker restores are explicitly not certified exact. No permutation/cursor is stored, so **arbitrary-step exact resume is not supported**. An interruption inside an epoch requires re-running from a completed epoch checkpoint and accounting for the repeated work.
+Exact continuation is tested at completed epoch boundaries with `num_workers=0`, unchanged data/order, architecture, schedule and batch layout. Standard PyTorch RandomSampler/SequentialSampler with the standard BatchSampler are supported; custom samplers are rejected for exact resume. Dedicated and global-default loader RNG modes are both covered. Keep the same dataset content: the core checkpoint checks length/layout but does not authenticate a dataset hash. Persistent worker RNG is unsupported; other multiworker restores are explicitly not certified exact. No permutation/cursor is stored, so **arbitrary-step exact resume is not supported**. An interruption inside an epoch requires re-running from a completed epoch checkpoint and accounting for the repeated work.
 
 ## Verification and interpretation
 
@@ -118,10 +120,10 @@ Exact continuation is tested at completed epoch boundaries with `num_workers=0`,
 python -m unittest tests.test_georeg tests.test_georeg_model tests.test_georeg_resume tests.test_georeg_cli -v
 ```
 
-CUDA tests require explicit `GEOSID_TEST_CUDA=1` and should run inside the local GPU budget wrapper. CPU tests do not require downloading a language model. The compatibility test obtains the original RQVAE source from the pinned Git commit, so that commit must be present in the local clone.
+CUDA tests require explicit `GEOSID_TEST_CUDA=1` and an available CUDA device. Run `python -m unittest tests.test_georeg.CudaTests tests.test_georeg_model.CudaModelTests tests.test_georeg_resume_cuda.CudaEpochResumeTests -v` after setting that variable. Respect your own compute budget; no budget orchestrator is part of this feature. CPU tests do not require downloading a language model. The compatibility test obtains the original RQVAE source from the pinned Git commit, so that commit must be present in the local clone.
 
 The tests cover an independent NumPy reference, uneven projection chunks, no hidden batch/projection multiplier, raw and normalized FP64 gradcheck, finite constant batches, clear invalid-input errors, autocast precision, separate RNG, original STE versus auxiliary Jacobian, later-level encoder gradients, absent GeoReg-only codebook gradients, and unchanged base gradients/updates. Disabled-mode outputs, SID, loss, gradients, update and global RNG are compared exactly against the pinned upstream model, including dropout and Sinkhorn. The declared FP32 residual comparison tolerance is `atol=2e-6`, `rtol=2e-5`; algebraically equivalent STE expressions need not be bitwise equal.
 
-Tokenizer diagnostics report reconstruction MSE, code usage, entropy in nats, normalized entropy `H/log(K)`, effective ratio `exp(H)/K`, Gini, per-prefix unique counts and duplicate excess `(N-U)/N`, collision-item fraction, same-prefix pair fraction, fixed-direction normalized CF, original residual RMS, covariance spectrum and effective rank. These are distinct metrics. Prefix sharing and balanced codes do not by themselves demonstrate better recommendations.
+Tokenizer diagnostics report reconstruction MSE, code usage, entropy in nats, normalized entropy `H/log(K)` (defined as zero for a single-entry codebook), effective ratio `exp(H)/K`, Gini, per-prefix unique counts and duplicate excess `(N-U)/N`, collision-item fraction, same-prefix pair fraction, fixed-direction normalized CF, original residual RMS, covariance spectrum and effective rank. These are distinct metrics. Prefix sharing and balanced codes do not by themselves demonstrate better recommendations.
 
-Matched tokenizer experiments and paired item-level recommendation evaluation belong to the separate `research/geosid/` workflow and final report. Software tests, synthetic smoke, finite geometry or final-SID uniqueness do not establish algorithmic benefit. Negative, unconverged and incomplete results must remain visible.
+The local matched research study is separate from this core contribution: nine fixed-budget tokenizer runs and two A/C downstream seed pairs were completed; the four ranking metrics improved for seed 42 and declined for seed 2026. Stable recommendation benefit and convergence were not established. Software tests, synthetic smoke, finite geometry or final-SID uniqueness do not establish algorithmic benefit. Negative, unconverged and incomplete results must remain visible.

@@ -292,6 +292,53 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(torch.get_rng_state().device.type, "cpu")
         self.assertEqual(resumed.model.georeg.get_rng_state().device.type, "cpu")
 
+    def test_behavioral_model_settings_are_checked_before_mutation(self):
+        loader = DataLoader(RecordingDataset(), batch_size=9, shuffle=True)
+        source = Trainer(trainer_args(self.root / "source"), RQVAE(**model_args()), len(loader))
+        source.train_data = loader
+        path = source._save_checkpoint(-1, ckpt_file="initial.pth")
+        for change in ({"loss_type": "l1"}, {"quant_loss_weight": .5}, {"beta": .8},
+                       {"sk_epsilons": [.1, .1, .1]}, {"sk_iters": 3},
+                       {"dropout_prob": .2}, {"kmeans_iters": 7}):
+            with self.subTest(change=change):
+                target = Trainer(trainer_args(self.root / "target"),
+                                 RQVAE(**model_args(**change)), len(loader))
+                before = copy.deepcopy(target.model.state_dict())
+                rng = rng_snapshot()
+                with self.assertRaisesRegex(ValueError, "configuration"):
+                    target.load_checkpoint(path, loader)
+                assert_nested_equal(self, before, target.model.state_dict())
+                assert_rng_equal(self, rng, rng_snapshot())
+
+    def test_sampler_replacement_and_sample_count_cannot_silently_change(self):
+        data = RecordingDataset()
+        loader = DataLoader(data, batch_size=9, shuffle=True)
+        trainer = Trainer(trainer_args(self.root / "source"), RQVAE(**model_args()), len(loader))
+        trainer.train_data = loader
+        path = trainer._save_checkpoint(-1, ckpt_file="initial.pth")
+        for sampler in (RandomSampler(data, replacement=True),
+                        RandomSampler(data, num_samples=26)):
+            changed = DataLoader(data, batch_size=9, sampler=sampler)
+            with self.subTest(sampler=sampler), self.assertRaisesRegex(ValueError, "sampler"):
+                trainer.load_checkpoint(path, changed)
+
+    def test_resume_contract_cannot_be_omitted_or_change_schedule(self):
+        loader = DataLoader(RecordingDataset(), batch_size=9, shuffle=True)
+        trainer = Trainer(trainer_args(self.root / "source"), RQVAE(**model_args()), len(loader))
+        trainer.train_data = loader
+        path = trainer._save_checkpoint(-1, ckpt_file="initial.pth")
+        state = torch.load(path, weights_only=False)
+        self.assertIn("resume_config", state)
+        del state["resume_config"]
+        incomplete = self.root / "missing_contract.pth"
+        torch.save(state, incomplete)
+        with self.assertRaisesRegex(ValueError, "Incomplete"):
+            trainer.load_checkpoint(incomplete, loader)
+        changed = Trainer(trainer_args(self.root / "changed", eval_step=2),
+                          RQVAE(**model_args()), len(loader))
+        with self.assertRaisesRegex(ValueError, "configuration"):
+            changed.load_checkpoint(path, loader)
+
 
 if __name__ == "__main__":
     unittest.main()

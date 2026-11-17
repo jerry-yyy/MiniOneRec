@@ -52,7 +52,7 @@ def code_metrics(codes, sizes):
         entropy = float(-(probabilities * np.log(probabilities)).sum())
         layers.append({'layer': level + 1, 'counts': counts.tolist(),
                        'used_codes': int((counts > 0).sum()), 'usage_ratio': float((counts > 0).mean()),
-                       'entropy_nats': entropy, 'normalized_entropy': entropy / np.log(k),
+                       'entropy_nats': entropy, 'normalized_entropy': entropy / np.log(k) if k > 1 else 0.0,
                        'effective_ratio': float(np.exp(entropy) / k),
                        'gini': float(np.abs(counts[:, None] - counts[None, :]).sum() / (2 * k * counts.sum()))})
     return {'layers': layers, 'prefix': {str(j): group_metrics(codes[:, :j].tolist()) for j in range(1, codes.shape[1] + 1)}}

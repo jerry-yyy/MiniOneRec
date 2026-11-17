@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
 
 from sid_generation.geosid import main
+from rq.geosid_tools import code_metrics
 
 
 class CLITests(unittest.TestCase):
@@ -39,6 +41,24 @@ class CLITests(unittest.TestCase):
                     main([command, "--help"])
                 self.assertEqual(exited.exception.code, 0)
                 self.assertIn(expected, output.getvalue())
+
+    def test_single_entry_codebook_diagnostics_are_finite_json(self):
+        metrics = code_metrics(np.zeros((3, 3), dtype=np.int64), [1, 1, 1])
+        json.dumps(metrics, allow_nan=False)
+        for layer in metrics['layers']:
+            self.assertEqual(layer['entropy_nats'], 0.0)
+            self.assertEqual(layer['normalized_entropy'], 0.0)
+            self.assertEqual(layer['effective_ratio'], 1.0)
+
+    def test_singleton_geometry_batch_is_rejected_before_model_construction(self):
+        path = self.root / "singleton_tail.npy"
+        for count, batch in ((17, 8), (1, 8), (8, 1)):
+            np.save(path, np.ones((count, 12), dtype=np.float32))
+            with self.subTest(count=count, batch=batch), patch("rq.rqvae.RQVAE") as model:
+                with self.assertRaisesRegex(ValueError, "at least two"):
+                    self.invoke(["train", "--data_path", str(path), "--batch_size", str(batch),
+                                 "--geo_mode", "residual", "--geo_weight", "0.1"])
+                model.assert_not_called()
 
     def test_synthetic_train_export_diagnose_and_reordered_item_alignment(self):
         data = np.random.default_rng(85).normal(size=(48, 12)).astype(np.float32)

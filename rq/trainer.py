@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from time import time
 from torch import optim
+from torch.utils.data import BatchSampler, RandomSampler, SequentialSampler
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 
@@ -191,6 +192,7 @@ class Trainer(object):
             "scheduler": self.scheduler.state_dict(),
             "global_step": self.global_step,
             "resume_boundary": "epoch",
+            "resume_config": self._resume_config(),
             "geo_config": getattr(self.model, 'geo_config', None),
             "geo_rng": self.model.georeg.get_rng_state() if hasattr(self.model, 'georeg') else None,
             "vq_initted": [v.initted for v in self.model.rq.vq_layers],
@@ -209,8 +211,9 @@ class Trainer(object):
                 'persistent_workers': self.train_data.persistent_workers,
                 'dataset_length': len(self.train_data.dataset),
                 'sampler_type': type(self.train_data.sampler).__qualname__,
+                'sampler_replacement': getattr(self.train_data.sampler, 'replacement', None),
+                'sampler_num_samples': getattr(self.train_data.sampler, 'num_samples', None),
             },
-            "budget_ledger": os.environ.get('GEOSID_GPU_BUDGET_LEDGER'),
         }
         temporary_path = ckpt_path + '.tmp'
         torch.save(state, temporary_path, pickle_protocol=4)
@@ -226,6 +229,19 @@ class Trainer(object):
     def _generator_state(owner):
         generator = getattr(owner, 'generator', None)
         return generator.get_state() if generator is not None else None
+
+    def _resume_config(self):
+        # Strict weights do not encode behavioral attributes or LambdaLR's
+        # defining function. Bind these explicitly to an epoch continuation.
+        model_fields = ('in_dim', 'num_emb_list', 'e_dim', 'layers', 'dropout_prob',
+                        'bn', 'loss_type', 'quant_loss_weight', 'beta', 'kmeans_init',
+                        'kmeans_iters', 'sk_epsilons', 'sk_iters')
+        return {'model': {key: getattr(self.model, key) for key in model_fields},
+                'training': {'learner': self.learner.lower(), 'lr': self.lr,
+                             'weight_decay': self.weight_decay, 'epochs': self.epochs,
+                             'scheduler': self.lr_scheduler_type.lower(),
+                             'warmup_steps': self.warmup_steps, 'max_steps': self.max_steps,
+                             'eval_step': self.eval_step}}
 
     def load_checkpoint(self, path, train_data=None):
         """Restore trusted local checkpoints at epoch boundaries only.
@@ -262,12 +278,18 @@ class Trainer(object):
             required = {'state_dict', 'optimizer', 'scheduler', 'epoch', 'global_step',
                         'rng', 'vq_initted', 'geo_config', 'geo_rng',
                         'loader_generator', 'sampler_generator', 'loader_config',
-                        'loader_sampler_generator_shared'}
+                        'loader_sampler_generator_shared', 'resume_config'}
             missing = required - state.keys()
             if missing:
                 raise ValueError(f'Incomplete epoch checkpoint; missing {sorted(missing)}')
             if train_data is None:
                 raise ValueError('Exact resume requires the training DataLoader')
+            if state['resume_config'] != self._resume_config():
+                raise ValueError('Exact resume model/training configuration differs from checkpoint')
+            if (type(train_data.sampler) not in (RandomSampler, SequentialSampler) or
+                    type(train_data.batch_sampler) is not BatchSampler):
+                raise ValueError('Exact resume supports only standard RandomSampler/SequentialSampler '
+                                 'with the standard BatchSampler')
             if not isinstance(rng, dict) or not {'python', 'numpy', 'torch', 'cuda'} <= rng.keys():
                 raise ValueError('Incomplete epoch checkpoint RNG state')
             if (not isinstance(state['global_step'], int) or state['global_step'] < 0 or
@@ -284,14 +306,6 @@ class Trainer(object):
             if getattr(train_data, 'num_workers', 0) > 0:
                 self.logger.warning('Exact worker resume requires deterministic dataset transforms; '
                                     'worker-internal RNG state is not checkpointed')
-            # LambdaLR does not serialize its scheduling function. Its defining
-            # settings must match, in addition to restoring its numeric state.
-            saved_args = state.get('args')
-            for name in ('learner', 'lr_scheduler_type', 'epochs', 'warmup_epochs',
-                         'batch_size', 'dropout_prob', 'bn', 'num_workers'):
-                if (hasattr(saved_args, name) and hasattr(self.args, name) and
-                        getattr(saved_args, name) != getattr(self.args, name)):
-                    raise ValueError(f'Exact resume configuration differs: {name}')
             for key, owner in owners:
                 saved = state[key]
                 generator = getattr(owner, 'generator', None)
@@ -307,8 +321,11 @@ class Trainer(object):
             if shared != state['loader_sampler_generator_shared']:
                 raise ValueError('Exact resume requires matching loader/sampler generator sharing')
             saved_loader = state.get('loader_config')
-            if saved_loader is None:
-                raise ValueError('Exact resume requires saved DataLoader configuration')
+            loader_fields = {'batch_size', 'drop_last', 'num_workers', 'persistent_workers',
+                             'dataset_length', 'sampler_type', 'sampler_replacement',
+                             'sampler_num_samples'}
+            if not isinstance(saved_loader, dict) or not loader_fields <= saved_loader.keys():
+                raise ValueError('Incomplete epoch checkpoint DataLoader configuration')
             for name in ('batch_size', 'drop_last', 'num_workers', 'persistent_workers'):
                 if saved_loader[name] != getattr(train_data, name, None):
                     raise ValueError(f'Exact resume DataLoader configuration differs: {name}')
@@ -316,6 +333,9 @@ class Trainer(object):
                 raise ValueError('Exact resume dataset length differs')
             if saved_loader['sampler_type'] != type(train_data.sampler).__qualname__:
                 raise ValueError('Exact resume sampler type differs')
+            for name in ('replacement', 'num_samples'):
+                if saved_loader['sampler_' + name] != getattr(train_data.sampler, name, None):
+                    raise ValueError(f'Exact resume sampler configuration differs: {name}')
 
         # Validate configuration/completeness before mutating model or RNG state.
         self.model.load_state_dict(state['state_dict'], strict=True)

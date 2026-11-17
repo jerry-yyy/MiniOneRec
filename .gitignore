@@ -4,5 +4,4 @@ __pycache__/
 /outputs/sid/
 /artifacts/geosid/
 /outputs/geosid/
-/research/geosid/local/
 /.pytest_cache/

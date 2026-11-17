@@ -15,6 +15,8 @@ Scaling Generative Recommendation**
 
 **MiniOneRec** is the first fully open-source **generative recommendation** framework, which provides an end-to-end workflow spanning **SID construction**, **supervised fine-tuning (SFT)**, and recommendation-oriented **reinforcement learning (RL)**. 
 
+Optional RQ-VAE geometry regularization is documented in [GeoSID-style GeoReg](docs/geosid.md), including train/export/diagnose commands. It is disabled by default; the local study does not establish a stable recommendation benefit.
+
 ---
 
 ## 📢 Announcement

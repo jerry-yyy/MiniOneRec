@@ -124,10 +124,10 @@ class GeoReg(nn.Module):
         self.eps = eps
         self.projection_chunk = projection_chunk
         self.seed = seed
-        # Double construction also preserves the reference grid under gradcheck.
-        for name, value in zip(("frequencies", "target_cf", "frequency_weights"),
-                               frequency_grid(num_frequencies, tmax, dtype=torch.float64)):
-            self.register_buffer(name, value, persistent=False)
+        # Immutable CPU constants deliberately do not participate in Module.to:
+        # model.half()/bfloat16() must not round the Gaussian target/weights.
+        # Copy to the input's working precision/device only inside forward.
+        self._grid = frequency_grid(num_frequencies, tmax, dtype=torch.float64)
         self._generator = torch.Generator(device="cpu").manual_seed(seed)
 
     def get_rng_state(self):
@@ -154,8 +154,8 @@ class GeoReg(nn.Module):
             else:
                 directions = directions.to(device=normalized.device, dtype=normalized.dtype)
                 _validate_directions(directions, normalized.shape[1])
-            grid = [value.to(device=normalized.device, dtype=normalized.dtype) for value in
-                    (self.frequencies, self.target_cf, self.frequency_weights)]
+            grid = [value.to(device=normalized.device, dtype=normalized.dtype)
+                    for value in self._grid]
             loss = _cf_discrepancy(normalized, directions, *grid, self.projection_chunk)
             if not return_stats:
                 return loss

@@ -150,6 +150,18 @@ class MathematicalTests(unittest.TestCase):
         self.assertTrue(torch.equal(expected, actual))
         self.assertEqual(g(x.double(), u.double()).dtype, torch.float64)
 
+    def test_module_dtype_conversion_preserves_geometry_constants(self):
+        x = torch.randn(29, 4, generator=torch.Generator().manual_seed(42))
+        for dtype in (torch.float32, torch.float64):
+            inputs = x.to(dtype)
+            u = directions(dtype=dtype)
+            expected = GeoReg()(inputs, u)
+            for converted in (GeoReg().half(), GeoReg().bfloat16(),
+                              GeoReg().float(), GeoReg().half().double()):
+                with self.subTest(input_dtype=dtype, module=converted):
+                    self.assertTrue(torch.equal(expected, converted(inputs, u)))
+                    self.assertEqual(converted.state_dict(), {})
+
 
 @unittest.skipUnless(os.environ.get("GEOSID_TEST_CUDA") == "1", "CUDA tests require budgeted opt-in")
 class CudaTests(unittest.TestCase):
