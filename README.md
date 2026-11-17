@@ -17,6 +17,8 @@ Scaling Generative Recommendation**
 
 ---
 
+Optional [GeoSID geometry shaping](docs/geosid.md) provides independent RQ-VAE and experimental fixed-catalog RQ-OPQ adapters. It is disabled by default and leaves the existing training and quantizer implementations unchanged.
+
 ## 📢 Announcement
 
 - 2026-05-13 — We have introduced the new TS-Rec codebase, following the method proposed in [Fine-grained Semantics Integration for Large Language Model-based Recommendation](https://arxiv.org/pdf/2602.22632). We sincerely thank the contributors for their valuable efforts and support in making this update available.

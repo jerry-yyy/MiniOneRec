@@ -1,0 +1,7 @@
+{
+  "backend": "rq-opq",
+  "seed": 2024,
+  "model": {"rq_levels": 2, "codebook_size": 4, "opq_subspaces": 2, "nbits": 2, "rq_niter": 5, "opq_niter": 3, "pq_niter": 5, "threads": 1},
+  "geometry": {"mode": "block", "weight": 0.0},
+  "training": {"steps": 30, "lr": 0.005, "semantic_weight": 1.0, "cosine_weight": 1.0, "device": "cpu"}
+}

@@ -1,0 +1,7 @@
+{
+  "backend": "rqvae",
+  "seed": 2024,
+  "model": {"num_emb_list": [8, 8, 8], "e_dim": 4, "layers": [24, 16]},
+  "geometry": {"mode": "residual", "weight": 0.0},
+  "training": {"epochs": 2, "batch_size": 16, "lr": 0.001, "device": "cpu"}
+}
