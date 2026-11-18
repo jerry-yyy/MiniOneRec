@@ -1,10 +1,9 @@
 """Artifact compatibility and provenance through the actual fit/encode/diagnose CLI.
 
-hierarchical_v1.zip preserves the five raw files published by commit
-41d51f16acd3098ad9322dbc8d0a7a91ec906cda on Windows, including original line
-endings covered by its manifest. It was generated using the inputs below and
-the original fit CLI with --dataset-name Legacy --branch-factor 2 (all other
-solver parameters at defaults). No v2 writer is used to manufacture the fixture.
+hierarchical_v1.zip preserves five files from the v1 Balanced writer, including
+the original line endings covered by the manifest hashes. The v1 fit CLI used
+the inputs below, --dataset-name Legacy, --branch-factor 2 and default solver
+parameters.
 """
 
 import hashlib
@@ -69,8 +68,7 @@ def test_real_v1_publication_validates_and_migrates_without_changing_its_index(l
     assert diagnose(new)["source_format_version"] == 2
     fresh = publish(tmp_path, "default", "fit", "--branch-factor", "2")
     assert read(fresh, "tree")["nodes"] == read(legacy, "tree")["nodes"]
-    # v1 fixture used the Windows text writer. Preserve its exact formatting
-    # while comparing platform-specific line terminators on POSIX.
+    # Account for the fixture's CRLF endings when comparing local JSON bytes.
     expected = (legacy / "Legacy.index.json").read_bytes().replace(b"\r\n", os.linesep.encode())
     assert expected == (fresh / "Legacy.index.json").read_bytes() == (new / "Legacy.index.json").read_bytes()
 

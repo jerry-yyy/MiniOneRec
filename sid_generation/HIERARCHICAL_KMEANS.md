@@ -5,7 +5,7 @@
 This CPU builder partitions an embedding catalog into a capacity-balanced
 tree and exports MiniOneRec's existing `Dataset.index.json` format. Select
 `balanced` for the original SEATER-style constrained solver, `greedy` for a
-faster approximate assignment, or `hybrid` to keep the constrained solver
+global distance-ordered capacity assignment, or `hybrid` to keep the constrained solver
 on smaller nodes. The builder runs independently of model training.
 
 The contribution covers tree construction and SID adaptation only. It does not
@@ -85,20 +85,19 @@ tokens.
 
 ## Installation
 
-Use an isolated environment; validation used Python 3.12.5 on Windows:
+The validation environment used native ARM64 Python 3.12.4 on an Apple M1.
+From the repository root, create and activate an isolated environment.
 
 ```bash
-python -m venv .venv-hierarchical
-# Windows PowerShell:
-.venv-hierarchical/Scripts/python.exe -m pip install -r sid_generation/requirements-hierarchical.txt
-# POSIX: use .venv-hierarchical/bin/python instead.
+python3.12 -m venv .venv-hierarchical
+source .venv-hierarchical/bin/activate
+python -m pip install -r sid_generation/requirements-hierarchical.txt
 ```
 
 In subsequent commands, `python` means that environment's interpreter. The
-builder requires NumPy, scikit-learn, k-means-constrained and psutil; PyTorch
-and FAISS are unnecessary for construction. The optional integration checks
-need `requirements-hierarchical-test.txt` and a separately installed CPU
-PyTorch wheel; see [the validation setup](HIERARCHICAL_VALIDATION.md#environment).
+builder requires NumPy, scikit-learn, k-means-constrained and psutil.
+The integration tests use PyTorch on CPU. The upstream regression suite also
+uses FAISS. See the [test installation and commands](HIERARCHICAL_VALIDATION.md#reproducing-the-checks).
 
 ## Input Format
 
@@ -217,10 +216,9 @@ sampling or `--keep_longest_only` when checking all source rows.
 
 `validate_hierarchical_integration.py` checks the actual TokenExtender,
 dataset methods, evaluator callbacks and CPU prefix masks without loading
-model weights. `benchmark_hierarchical.py` reproduces the measured
-fit/reload/conversion workflow from prepared local data. Full commands, source
-revisions, SHA256 values and validation limits are in
-[HIERARCHICAL_VALIDATION.md](HIERARCHICAL_VALIDATION.md).
+model weights. `benchmark_hierarchical.py` can run additional benchmarks on
+prepared local data. For the tested environment, catalog checksums and
+reproduction commands, see the [validation report](HIERARCHICAL_VALIDATION.md).
 
 ## Configuration
 
@@ -265,8 +263,7 @@ WCSS recomputed around the final child means; WCSS never changes an assignment.
   K legal children do not imply SEATER's candidate-only inference cost.
 - Tokenizer and CPU-mask checks do not establish model-level generation or
   training behavior. No model weights, `model.generate`, SFT or RL were used.
-- Existing-directory replacement is intentionally unsupported by this CLI;
-  choose a fresh output directory, including on Windows.
+- Each fit or encode publishes to a fresh output directory.
 
 ## References
 
