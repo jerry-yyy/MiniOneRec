@@ -256,9 +256,10 @@ complete SID in the auxiliary dataset tasks.
 
 - **3.1.7 SEATER-style Hierarchical K-Means**
 
-An optional CPU builder recursively partitions original item embeddings with
-balanced constrained K-Means and directly exports variable-length MiniOneRec
-SIDs with unique node and item-leaf tokens. It requires no neural training.
+An optional CPU builder recursively partitions original item embeddings using
+balanced constrained K-Means (default), greedy capacity assignment, or a
+node-size hybrid. All three export variable-length MiniOneRec SIDs with unique
+node and item-leaf tokens.
 See the [usage guide](sid_generation/HIERARCHICAL_KMEANS.md) for installation,
 commands and vocabulary costs, and the [validation report](sid_generation/HIERARCHICAL_VALIDATION.md)
 for measured results and limits.

@@ -1,11 +1,12 @@
-# SEATER-style balanced hierarchical K-Means
+# Hierarchical K-Means SID construction
 
 ## Overview
 
-This optional CPU SID builder independently implements SEATER-style balanced
-hierarchical K-Means and exports MiniOneRec's existing `Dataset.index.json`
-format. It needs no neural-network training or GPU. Existing RQ-VAE, trainers,
-SID builders and downstream data consumers are unchanged.
+This CPU builder partitions an embedding catalog into a capacity-balanced
+tree and exports MiniOneRec's existing `Dataset.index.json` format. Select
+`balanced` for the original SEATER-style constrained solver, `greedy` for a
+faster approximate assignment, or `hybrid` to keep the constrained solver
+on smaller nodes. The builder runs independently of model training.
 
 The contribution covers tree construction and SID adaptation only. It does not
 include SEATER's recommendation model, contrastive/alignment/ranking objectives,
@@ -14,30 +15,29 @@ checks, pinned data sources and reproducibility commands.
 
 ## Algorithm
 
-For a cluster containing N items, stop when `N <= K`. Otherwise, use
-`KMeansConstrained` to form K children with:
+At each node, stop if its N items fit in a terminal group (`N <= K`), including
+at the root. Otherwise partition that node's **original float32 working
+vectors**, with no normalization or residual subtraction. For
+`q, r = divmod(N, K)`, exactly r children have q+1 items and K-r have q.
 
-```text
-size_min = floor(N / K)
-size_max = floor(N / K) + 1
-```
+| Method | How a nonterminal node splits |
+| --- | --- |
+| `balanced` | SEATER Algorithm 1. Fit `KMeansConstrained` with `size_min=q` and `size_max=q+1`. Use this to reproduce the original Balanced candidate. |
+| `greedy` | Fit ordinary scikit-learn K-Means to the node with k-means++ initialization and Lloyd iterations. Compute all N×K squared Euclidean distances. Visit candidates in global ascending order of (distance, item position, original centroid index). Assign an unassigned item only if that centroid still has room. The first r original centroids have capacity q+1. Stop when all items are assigned. There is one capacity pass, with no subsequent centroid refit. |
+| `hybrid` | Apply greedy if this node has `N > greedy_threshold`. Use constrained otherwise. At the default threshold a 2,000-item node uses constrained. Siblings can select different solvers. |
 
-Recursively cluster each child's **original item embeddings**. The backend
-uses constrained assignments with the squared Euclidean K-Means objective;
-there is no residual subtraction. RQ-KMeans instead quantizes successive
-residual vectors. Defaults are `K=10` and `seed=0`.
+Item positions follow canonical item-ID order within each node. Sorting the
+final groups by minimum ID happens **after** capacity assignment. Identical
+vectors and duplicate centroids use the same tie and capacity rules. Invalid
+centers, nonfinite distances and invalid labels fail the fit.
 
-Every split has exactly K nonempty children. A terminal cluster contains at
-most K item leaves; its item edges are not another constrained K-way split.
-Every item occurs exactly once. Divisible N still uses the bounds above, with
-the total size forcing equal children. Duplicate and identical vectors use the
-same constrained solver. Infeasible bounds, solver failures and invalid
-assignments raise errors, with no ordinary K-Means or random-grouping fallback.
-
-These bounds follow paper Algorithm 1 and the official balanced implementation.
-This adapter explicitly handles `N <= K` at the root, omits redundant singleton
-cluster tokens, and preserves natural variable-length paths. It does not force
-the paper's equal-length identifier presentation onto arbitrary catalog sizes.
+For Greedy and Hybrid we follow the pinned Re-SEATER builder's global
+candidate order and node-local test; the paper describes a nearest-available
+assignment and summarizes the switch by level. The trainer sets the threshold
+to 0 for speedup and 2,000 for hybrid. The reference uses FAISS above 100
+items and scikit-learn for smaller nodes. Here every greedy split uses CPU
+scikit-learn, the configured seed and the supplied embeddings. Comparing
+identifiers byte-for-byte with the author's FAISS runs is outside this contract.
 
 ## SID Representation
 
@@ -137,6 +137,10 @@ python -m sid_generation.hierarchical_cli fit \
 Add `--dataset-dir prepared/` to validate and copy catalog metadata and
 interaction companions for the existing MiniOneRec converter.
 
+Use `--method greedy` for greedy assignment at every split, or
+`--method hybrid --greedy-threshold 2000` for node-local switching. Give
+each fit a separate output directory.
+
 ### Encode
 
 ```bash
@@ -163,6 +167,17 @@ python -m sid_generation.hierarchical_cli diagnose \
 
 This validates tree invariants and reports statistics. Supplying the manifest
 also verifies complete artifact-hash coverage and tree/index/row-map agreement.
+
+New publications use format 2, algorithm `hierarchical_kmeans`, version
+`2.0.0`. A format-1 tree and its original `balanced_hierarchical_kmeans`
+1.0.0 manifest are readable as Balanced. The original v1 manifest omitted
+`format_version`; v2 requires it in both files. When a manifest is provided for
+diagnosis, or found next to the model during encoding, its original identity,
+six- or ten-parameter schema and artifact hashes are verified before migration.
+Encoding writes format 2 in a fresh directory and records the source tree's
+byte-level SHA256. A standalone tree can be loaded without a manifest. The
+manifest records the executed fit backends and counts. An encode performs
+zero splits.
 
 ## Output Files
 
@@ -211,18 +226,30 @@ revisions, SHA256 values and validation limits are in
 
 | Fit option | Default | Constraint or meaning |
 | --- | --- | --- |
-| `--branch-factor` | 10 | K >= 2; children per constrained split |
-| `--seed` | 0 | Integer in `[0, 2**32-1]` |
-| `--n-init` | 10 | Positive restart count per split |
-| `--max-iter` | 300 | Positive iteration limit per restart |
-| `--tol` | 0.0001 | Finite, non-negative convergence tolerance |
-| `--n-jobs` | 1 | Positive backend job count |
+| `--method` | balanced | balanced, greedy or hybrid |
+| `--branch-factor` | 10 | K ≥ 2, children per split for all methods |
+| `--seed` | 0 | Seed in `[0, 2**32-1]` for both estimators |
+| `--tol` | 0.0001 | Finite nonnegative convergence tolerance for both estimators |
+| `--n-init`, `--max-iter`, `--n-jobs` | 10, 300, 1 | Constrained restarts, iterations per restart and jobs, all positive |
+| `--greedy-threshold` | 2000 | Nonnegative hybrid cutoff applied separately to each nonterminal node |
+| `--greedy-n-init`, `--greedy-max-iter` | 5, 20 | Ordinary K-Means restarts and iterations per restart, both positive |
 
 BLAS/OpenMP threads are bounded to one during fitting. The default single
 solver job differs from SEATER's `n_jobs=-2`; use the same dependency versions
 and numerical environment for repeatability. Version 0.9.0 of
 k-means-constrained was validated here, rather than SEATER's 0.7.2 environment.
 K=10 follows the official function default and is not claimed to be optimal.
+
+For one greedy node with D features, centroid fitting takes roughly
+`O(restarts × iterations × NKD)` arithmetic. Building exact distances costs
+`O(NKD)`. A stable sort of the flattened array gives tuple order (comparison
+sort upper bound `O(NK log(NK))`), followed by at most NK candidate visits.
+The matrix costs 4NK bytes, plus an integer order array (8NK bytes on a
+64-bit system), sort workspace and a bounded block of coordinate differences.
+The implementation avoids an N×K×D temporary. Peak process memory also
+includes embeddings, solver workspace, final-group error evaluation and export.
+Tree cost sums the per-node work. Statistics distinguish solver inertia from
+WCSS recomputed around the final child means; WCSS never changes an assignment.
 
 ## Limitations
 
@@ -250,6 +277,11 @@ K=10 follows the official function default and is not claimed to be optimal.
 - [Official SEATER repository](https://github.com/Ethan00Si/SEATER_Generative_Retrieval),
   audited revision `b12cd29585720f891b1a8f41dacec5e0554fac6f`;
   [balanced tree builder](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/blob/b12cd29585720f891b1a8f41dacec5e0554fac6f/utils/build_tree.py).
+- Valeau et al., *Efficient Optimization of Hierarchical Identifiers for
+  Generative Recommendation*. [Re-SEATER paper, version 2](https://arxiv.org/html/2512.18434v2).
+  Source semantics were checked at revision `32235415e5abc1fa97d0516199422b5d9a34471b`.
+  [Greedy assignment and recursive construction](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/utils/build_tree_speedup.py)
+  and [trainer selection](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/trainer.py).
 
 The audited SEATER revision had no explicit software license (`LICENSE` or
 `COPYING`), and repository metadata reported no license. This is an independent
