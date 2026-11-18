@@ -1,0 +1,6 @@
+-r requirements-hierarchical.txt
+pytest>=8,<10
+pandas>=2.2,<3
+transformers>=4.51,<5
+# Install torch separately with --index-url https://download.pytorch.org/whl/cpu
+# to run the actual MiniOneRec logits processor integration tests on CPU.

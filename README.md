@@ -195,7 +195,7 @@ bash rq/amazon_text2emb.sh \
 
 ### 3. SID Construction
 
-Choose one of 3.1.1 through 3.1.6.
+Choose one of 3.1.1 through 3.1.7.
 
 - **3.1.1 Train RQ-VAE on the embeddings**
 ```
@@ -253,6 +253,15 @@ residuals; RQ-OPQ combines an RQ prefix with ordered OPQ subcodes. See the linke
 English guide for installation, commands, collision handling and validation
 limits. A collision suffix can increase SID length; this branch preserves the
 complete SID in the auxiliary dataset tasks.
+
+- **3.1.7 SEATER-style Hierarchical K-Means**
+
+An optional CPU builder recursively partitions original item embeddings with
+balanced constrained K-Means and directly exports variable-length MiniOneRec
+SIDs with unique node and item-leaf tokens. It requires no neural training.
+See the [usage guide](sid_generation/HIERARCHICAL_KMEANS.md) for installation,
+commands and vocabulary costs, and the [validation report](sid_generation/HIERARCHICAL_VALIDATION.md)
+for measured results and limits.
 
 - **3.2 Generate indices(only RQ-VAE & RQ-Kmeans+ needed)**
 ```

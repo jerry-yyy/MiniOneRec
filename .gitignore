@@ -1,4 +1,6 @@
 __pycache__/
 *.py[cod]
-/.venv-sid/
-/outputs/sid/
+/.venv*/
+/outputs/
+/data/hierarchical-source/
+/.pytest_cache/
