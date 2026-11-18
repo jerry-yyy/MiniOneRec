@@ -238,27 +238,54 @@ changed to accommodate variable-length paths.
 The index is consumed directly by existing TokenExtender, dataset and prefix
 constraint code. Registration must preserve each node/leaf token atomically
 and the complete SID length. Allow sufficient generation length for the
-catalog's longest path, newline and EOS. With metadata and `.inter` companions
-copied during `fit`, run the existing converter:
+catalog's longest path, newline and EOS.
+
+`MyCatalog` in the SID examples above is a valid builder dataset name. Passing
+`--category MyCatalog` to [`sft.py`](../sft.py) raises a `KeyError`. Its
+`category_dict` supports only `Industrial_and_Scientific`, `Office_Products`,
+`Toys_and_Games`, `Sports` and `Books`. SFT for a new category requires a
+separate change to that upstream mapping.
+
+For the official `Industrial_and_Scientific` dataset, prepare the catalog and
+interaction splits, fit the SIDs in a fresh directory, then convert the data
+before SFT. Run these commands from the repository root. If the source files
+are already cached, add `--offline` to the preparation command.
 
 ```bash
-python convert_dataset.py --data_dir outputs/hierarchical \
-  --dataset_name MyCatalog --output_dir outputs/hierarchical-converted
+dataset=Industrial_and_Scientific
+source_dir=data/hierarchical-source
+python -m sid_generation.prepare_hierarchical_data
+python -m sid_generation.hierarchical_cli fit \
+  --data-path "$source_dir/Amazon/index/$dataset.emb-qwen-td.npy" \
+  --item-ids "$source_dir/prepared/$dataset.item_ids.json" \
+  --dataset-dir "$source_dir/prepared" --dataset-name "$dataset" \
+  --output-dir outputs/hierarchical-industrial
+python convert_dataset.py --data_dir outputs/hierarchical-industrial \
+  --dataset_name "$dataset" --category "$dataset" \
+  --output_dir outputs/hierarchical-industrial-csv
 ```
 
-For Industrial_and_Scientific, the preparation helper also builds `.inter`
-companions from the release CSVs' original-ID columns. Use `--offline` to
-revalidate existing downloads. Do not use converter
-sampling or `--keep_longest_only` when checking all source rows.
+The preparation helper builds the `.inter` splits from the release CSVs'
+original item IDs. The converter's `--dataset_name` selects the input files.
+Its `--category` sets the output filename prefix and defaults to
+`--dataset_name`. It does not add a category to `sft.py`. The command above
+keeps all source rows by omitting sampling and `--keep_longest_only`.
 
-Convert the dataset before starting supervised fine-tuning (SFT). In the
-`sft.py` command in `sft.sh`, point `--train_file` and `--eval_file` to the
-converted CSVs under `outputs/hierarchical-converted/train/` and
-`outputs/hierarchical-converted/valid/`, respectively. Use the same catalog
-for `--sid_index_path outputs/hierarchical/MyCatalog.index.json` and
-`--item_meta_path outputs/hierarchical/MyCatalog.item.json`. The hierarchical
-K-Means validation did not run SFT. For the full training setup, see the
-[MiniOneRec SFT guide](../README.md#4-sft).
+For supervised fine-tuning (SFT), set the following arguments **inside** the
+`torchrun` call to `sft.py` in [`sft.sh`](../sft.sh). The launcher does not
+forward arguments passed to `bash sft.sh`.
+
+| SFT argument | Value for this catalog |
+| --- | --- |
+| `--category` | `Industrial_and_Scientific` |
+| `--train_file` | `outputs/hierarchical-industrial-csv/train/Industrial_and_Scientific_5_2016-10-2018-11.csv` |
+| `--eval_file` | `outputs/hierarchical-industrial-csv/valid/Industrial_and_Scientific_5_2016-10-2018-11.csv` |
+| `--sid_index_path` | `outputs/hierarchical-industrial/Industrial_and_Scientific.index.json` |
+| `--item_meta_path` | `outputs/hierarchical-industrial/Industrial_and_Scientific.item.json` |
+
+Configure the base model and training output directory in the same launcher.
+This project did not run SFT or RL. See the [MiniOneRec SFT guide](../README.md#4-sft)
+for the training setup.
 
 `validate_hierarchical_integration.py` checks the actual TokenExtender,
 dataset methods, evaluator callbacks and CPU prefix masks without loading
