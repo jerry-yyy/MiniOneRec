@@ -103,9 +103,8 @@ uses FAISS. See the [test installation and commands](HIERARCHICAL_VALIDATION.md#
 
 - `--data-path`: a nonempty, finite, real-valued `(N, D)` NumPy `.npy` array.
   Loading disables pickle. The solver works in float32.
-- `--item-ids`: a JSON list with one unique string or integer ID per embedding
-  row, in **embedding-row order**, such as `["42", "0", "1001"]`. Metadata JSON
-  key order is not evidence of embedding alignment.
+- `--item-ids`: a required JSON array with one unique string or integer item
+  ID per embedding row.
 - `--dataset-name`: letters, digits, underscores or hyphens, beginning with a
   letter or digit; this becomes the artifact filename prefix.
 - Optional `--dataset-dir`: `Dataset.item.json` with exactly the catalog's keys
@@ -117,6 +116,46 @@ Catalog SHA256 fingerprints include canonical IDs, shape and original numeric
 values represented as little-endian float64. Integers outside `[-2**53, 2**53]`
 and floating-point precision above float64 are rejected to avoid ambiguous
 fingerprints.
+
+### Preparing item_ids.json
+
+Entry `i` in `item_ids.json` must be the real item ID for row `i` of
+`embeddings.npy`. Metadata JSON key order cannot establish that mapping.
+Item ID `0` is valid and must be kept when present.
+
+**A. Confirmed IDs 0 through N−1 in row order.** Use this command only if
+you have confirmed that the embedding producer wrote item 0 first, then item
+1, and so on without gaps. Run it in the directory containing `embeddings.npy`.
+
+```bash
+python -c "import json, pathlib, numpy as np; n = np.load('embeddings.npy', mmap_mode='r', allow_pickle=False).shape[0]; pathlib.Path('item_ids.json').write_text(json.dumps(list(range(n))), encoding='utf-8')"
+```
+
+**B. Noncontiguous IDs or reordered rows.** Have the producer save one item
+ID per line in `embedding_rows.txt` as it writes the final embedding rows.
+Apply any filtering or reordering to the IDs and vectors together. For
+example, three rows written for items 42, 0 and 1001 must yield
+`["42", "0", "1001"]` in that order. The following Python snippet converts
+the saved row record to JSON.
+
+```python
+import json
+from pathlib import Path
+import numpy as np
+
+ids = Path("embedding_rows.txt").read_text(encoding="utf-8").splitlines()
+n = np.load("embeddings.npy", mmap_mode="r", allow_pickle=False).shape[0]
+if len(ids) != n or len(set(ids)) != n or "" in ids:
+    raise ValueError("Expected one unique, nonempty item ID per embedding row")
+Path("item_ids.json").write_text(json.dumps(ids), encoding="utf-8")
+```
+
+If the row record is missing, recover the order from the producer or export
+the embeddings again with their IDs. For the pinned Industrial_and_Scientific
+catalog, run `python -m sid_generation.prepare_hierarchical_data` from the
+repository root. It uses the verified numeric producer order and writes
+`data/hierarchical-source/prepared/Industrial_and_Scientific.item_ids.json`
+for use with `--item-ids`.
 
 ## Usage
 
@@ -207,11 +246,9 @@ python convert_dataset.py --data_dir outputs/hierarchical \
   --dataset_name MyCatalog --output_dir outputs/hierarchical-converted
 ```
 
-For the public Industrial_and_Scientific catalog, run
-`python -m sid_generation.prepare_hierarchical_data` to obtain pinned inputs,
-validate the producer's numeric row-order contract including item 0, and
-prepare an explicit row map and `.inter` companions from original-ID CSV
-columns. Use `--offline` to revalidate existing downloads. Do not use converter
+For Industrial_and_Scientific, the preparation helper also builds `.inter`
+companions from the release CSVs' original-ID columns. Use `--offline` to
+revalidate existing downloads. Do not use converter
 sampling or `--keep_longest_only` when checking all source rows.
 
 `validate_hierarchical_integration.py` checks the actual TokenExtender,
@@ -271,7 +308,7 @@ WCSS recomputed around the final child means; WCSS never changes an assignment.
   and Contrastive Learning*, SIGIR-AP 2024.
   [DOI: 10.1145/3673791.3698408](https://doi.org/10.1145/3673791.3698408).
   [Paper Algorithm 1 and section 3.2.2](https://arxiv.org/pdf/2309.13375v2).
-- [Official SEATER repository](https://github.com/Ethan00Si/SEATER_Generative_Retrieval),
+- [Official SEATER repository](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/tree/b12cd29585720f891b1a8f41dacec5e0554fac6f),
   audited revision `b12cd29585720f891b1a8f41dacec5e0554fac6f`;
   [balanced tree builder](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/blob/b12cd29585720f891b1a8f41dacec5e0554fac6f/utils/build_tree.py).
 - Valeau et al., *Efficient Optimization of Hierarchical Identifiers for
@@ -280,8 +317,10 @@ WCSS recomputed around the final child means; WCSS never changes an assignment.
   [Greedy assignment and recursive construction](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/utils/build_tree_speedup.py)
   and [trainer selection](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/trainer.py).
 
-The audited SEATER revision had no explicit software license (`LICENSE` or
-`COPYING`), and repository metadata reported no license. This is an independent
-implementation based on the algorithm references; no author source was copied,
-ported or vendored. MiniOneRec's existing [Apache-2.0 LICENSE](../LICENSE) is
-unchanged.
+The audited original SEATER revision has no explicit software license. The
+audited Re-SEATER revision uses Apache-2.0. [Re-SEATER LICENSE at the cited revision](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/LICENSE)
+
+MiniOneRec independently implements SEATER's Balanced tree construction and
+Re-SEATER's Greedy and Hybrid strategies without copying or directly porting
+source code from either project. MiniOneRec retains its existing
+[Apache-2.0 license](../LICENSE).

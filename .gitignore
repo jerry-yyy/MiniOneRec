@@ -1,6 +1,17 @@
 __pycache__/
 *.py[cod]
-/.venv*/
-/outputs/
+/.venv-sid/
+/outputs/sid/
+
+# Hierarchical K-Means environment, source data and generated outputs
+/.venv-hierarchical/
 /data/hierarchical-source/
-/.pytest_cache/
+/outputs/hierarchical/
+/outputs/hierarchical-*
+/outputs/.hierarchical.sid.lock
+/outputs/.hierarchical-*.sid.lock
+/outputs/hkm-real-*/
+
+# Hierarchical K-Means strategy runs and legacy capture
+/outputs/strategies/
+/outputs/strategy-legacy-capture/
