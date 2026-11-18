@@ -260,10 +260,10 @@ An optional CPU builder recursively partitions original item embeddings using
 balanced constrained K-Means (default), greedy capacity assignment, or a
 node-size hybrid. All three export variable-length MiniOneRec SIDs with unique
 node and item-leaf tokens.
-Validated on macOS ARM64.
-See the [usage guide](sid_generation/HIERARCHICAL_KMEANS.md) for installation
-and vocabulary costs, and the [validation report](sid_generation/HIERARCHICAL_VALIDATION.md)
-for test results and the 3,686-item catalog checks.
+See the [usage guide](sid_generation/HIERARCHICAL_KMEANS.md) for installation,
+SID construction and MiniOneRec integration, and the
+[validation report](sid_generation/HIERARCHICAL_VALIDATION.md) for macOS ARM64
+test results and the 3,686-item catalog checks.
 
 - **3.2 Generate indices(only RQ-VAE & RQ-Kmeans+ needed)**
 ```

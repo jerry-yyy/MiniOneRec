@@ -117,3 +117,34 @@ for method in balanced greedy hybrid; do
     --model-path "$out/$dataset.tree.json" --manifest-path "$out/$dataset.manifest.json"
 done
 ```
+
+Two optional scripts run further checks on these outputs. Both need the test
+stack above. `validate_hierarchical_integration` loads an index with the
+tokenizer and runs MiniOneRec's existing TokenExtender, dataset methods,
+evaluator prefix callback and CPU logits masks; no model weights are loaded.
+`--download-tokenizer` fetches only the tokenizer and config files of
+Qwen2.5-0.5B-Instruct at a pinned revision. Omit it once they are downloaded.
+
+```bash
+python -m sid_generation.validate_hierarchical_integration \
+  --index-path "outputs/hierarchical-balanced/$dataset.index.json" \
+  --tokenizer-path outputs/hierarchical-tokenizer --download-tokenizer \
+  --report-path outputs/hierarchical-balanced-integration.json
+```
+
+`benchmark_hierarchical` uses the prepared source files without network access.
+It runs fit, diagnose, re-encode in reverse row order and conversion in
+separate processes and records their time and memory. It checks that the
+re-encoded index is byte-identical and that every converted row matches the
+release CSVs, then writes `benchmark_results.json` in a new `--output-root`.
+Pass `--tokenizer-path` to include the integration check above.
+
+```bash
+python -m sid_generation.benchmark_hierarchical --method hybrid \
+  --output-root outputs/hierarchical-benchmark-hybrid \
+  --tokenizer-path outputs/hierarchical-tokenizer
+```
+
+`--synthetic-items N` fits a seeded N×64 synthetic catalog instead, without a
+tokenizer, and `--fit-only` stops after fit and diagnose. `--wall-seconds` and `--rss-mib`
+stop the fit at a time or memory budget.
