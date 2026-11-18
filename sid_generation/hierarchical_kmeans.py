@@ -1,34 +1,42 @@
-"""Independent balanced hierarchical K-means SID construction.
-
-The algorithm recursively partitions subsets of the original embeddings using
-the min-cost-flow constrained assignment in k-means-constrained. It does not
-subtract residuals, fit neural networks, or fall back to unconstrained grouping.
-"""
+"""Fixed-catalog hierarchical K-means with per-node capacity constraints."""
 
 import logging
 import time
 
 import numpy as np
 
-from .hierarchical_tree import HierarchicalTree, canonical_catalog, validate_config
+from .hierarchical_greedy import greedy_labels
+from .hierarchical_tree import SPLIT_BACKENDS, HierarchicalTree, canonical_catalog, split_method, validate_config
+
+
+def _final_wcss(values, groups):
+    """Within-cluster sum of squares for the *accepted* item groups."""
+    total = 0.0
+    for rows in groups:
+        centered = values[rows].astype(np.float64)
+        centered -= centered.mean(axis=0)
+        total += np.einsum("ij,ij->", centered, centered)
+    return float(total)
 
 
 class HierarchicalKMeans:
-    def __init__(self, branch_factor=10, seed=0, n_init=10, max_iter=300, tol=1e-4, n_jobs=1):
+    def __init__(self, branch_factor=10, seed=0, n_init=10, max_iter=300, tol=1e-4, n_jobs=1,
+                 method="balanced", greedy_threshold=2000, greedy_n_init=5, greedy_max_iter=20):
         self.config = validate_config({"branch_factor": branch_factor, "seed": seed, "n_init": n_init,
-                                       "max_iter": max_iter, "tol": tol, "n_jobs": n_jobs})
+                                       "max_iter": max_iter, "tol": tol, "n_jobs": n_jobs,
+                                       "method": method, "greedy_threshold": greedy_threshold,
+                                       "greedy_n_init": greedy_n_init, "greedy_max_iter": greedy_max_iter})
         self.tree = None
         self.split_diagnostics = []
 
     def fit(self, embeddings, item_ids):
         """Build a complete deterministic catalog tree in canonical ID order.
 
-        Equal vectors still go through the constrained solver; its finite
-        capacity assignment resolves ties without dropping duplicate items.
-        Child labels are canonicalized after each fit. Repeatability is scoped
-        to the same dependency versions and numerical/thread environment.
+        Each nonterminal node splits a subset of the original working vectors.
+        Child order is canonicalized only after the chosen assignment is final.
         """
         from k_means_constrained import KMeansConstrained
+        from sklearn.cluster import KMeans
         from threadpoolctl import threadpool_limits
 
         values, ids, fingerprint = canonical_catalog(embeddings, item_ids)
@@ -50,28 +58,45 @@ class HierarchicalKMeans:
             upper = lower + 1
             if lower < 1 or not branch_factor * lower <= size <= branch_factor * upper:
                 raise ValueError(f"infeasible constrained clustering at node {node_id}: N={size}, K={branch_factor}")
-            estimator = KMeansConstrained(n_clusters=branch_factor, size_min=lower, size_max=upper,
-                                         random_state=self.config["seed"], n_init=self.config["n_init"],
-                                         max_iter=self.config["max_iter"], tol=self.config["tol"],
-                                         n_jobs=self.config["n_jobs"])
+            method = split_method(self.config, size)
             start = time.perf_counter()
             try:
-                labels = np.asarray(estimator.fit_predict(values[rows]))
+                if method == "constrained":
+                    estimator = KMeansConstrained(n_clusters=branch_factor, size_min=lower, size_max=upper,
+                                                  random_state=self.config["seed"], n_init=self.config["n_init"],
+                                                  max_iter=self.config["max_iter"], tol=self.config["tol"],
+                                                  n_jobs=self.config["n_jobs"])
+                    labels = np.asarray(estimator.fit_predict(values[rows]))
+                else:
+                    local = values[rows]
+                    estimator = KMeans(n_clusters=branch_factor, init="k-means++", algorithm="lloyd",
+                                       random_state=self.config["seed"], tol=self.config["tol"],
+                                       n_init=self.config["greedy_n_init"], max_iter=self.config["greedy_max_iter"])
+                    estimator.fit(local)
+                    if estimator.cluster_centers_.shape != (branch_factor, values.shape[1]):
+                        raise ValueError("greedy solver returned the wrong centroid shape")
+                    labels = greedy_labels(local, estimator.cluster_centers_)
+                    del local
             except Exception as exc:
-                raise RuntimeError(f"constrained K-means failed at node {node_id} (N={size}, "
-                                   f"K={branch_factor}, sizes={lower}..{upper}); no fallback was used") from exc
+                raise RuntimeError(f"{method} K-means failed at node {node_id} (N={size}, "
+                                   f"K={branch_factor}, sizes={lower}..{upper}); no fallback was used: {exc}") from exc
             elapsed = time.perf_counter() - start
             if labels.shape != (size,) or not np.issubdtype(labels.dtype, np.integer):
-                raise RuntimeError("constrained solver returned invalid cluster labels")
+                raise RuntimeError(f"{method} solver returned invalid cluster labels")
             if np.any(labels < 0) or np.any(labels >= branch_factor):
-                raise RuntimeError("constrained solver returned cluster labels outside [0, K)")
+                raise RuntimeError(f"{method} solver returned cluster labels outside [0, K)")
             counts = np.bincount(labels, minlength=branch_factor)
             if np.any(counts < lower) or np.any(counts > upper):
-                raise RuntimeError(f"constrained solver violated capacities at node {node_id}: {counts.tolist()}")
+                raise RuntimeError(f"{method} solver violated capacities at node {node_id}: {counts.tolist()}")
+            if not np.isfinite(estimator.cluster_centers_).all() or not np.isfinite(estimator.inertia_):
+                raise RuntimeError(f"{method} solver returned non-finite centers or inertia at node {node_id}")
             groups = [rows[labels == label] for label in range(branch_factor)]
             groups.sort(key=lambda group: ids[group[0]])
             record = {"node_id": node_id, "depth": depth, "items": size, "size_min": lower,
                       "size_max": upper, "child_sizes": [len(group) for group in groups],
+                      "split_method": method, "backend": SPLIT_BACKENDS[method],
+                      "inertia_stage": "before_capacity_assignment" if method == "greedy" else "constrained_fit",
+                      "final_wcss": _final_wcss(values, groups),
                       "inertia": float(estimator.inertia_), "iterations": int(estimator.n_iter_),
                       "elapsed_seconds": elapsed}
             diagnostics.append(record)

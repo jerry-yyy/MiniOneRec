@@ -4,11 +4,19 @@ The small WordLevel tokenizer is deliberately NOT a Qwen simulation. The separat
 validate_hierarchical_integration CLI tests the pinned actual Qwen tokenizer.
 """
 
+import ast
+import csv
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
+import numpy as np
+import pytest
+
+from sid_generation.hierarchical_cli import main as hierarchical_cli
 from sid_generation.validate_hierarchical_integration import (
     evaluator_constraints, token_extender, validate_dataset_contract, validate_index,
 )
@@ -89,6 +97,38 @@ class HierarchicalIntegrationTests(unittest.TestCase):
         self.path.write_text(json.dumps(self.index), encoding="utf-8")
         with self.assertRaisesRegex(AssertionError, "duplicate SID"):
             validate_index(self.path, local_tokenizer())
+
+
+@pytest.mark.parametrize("method", ["balanced", "greedy", "hybrid"])
+def test_generated_strategy_sids_reach_existing_consumers(method, tmp_path):
+    ids = [str(7 * i) for i in reversed(range(11))]
+    vectors = np.random.default_rng(113).normal(size=(len(ids), 4)).astype("float32")
+    np.save(tmp_path / "embeddings.npy", vectors, allow_pickle=False)
+    (tmp_path / "ids.json").write_text(json.dumps(ids), encoding="utf-8")
+    (tmp_path / "Demo.item.json").write_text(
+        json.dumps({item: {"title": f"Item {item}"} for item in ids}), encoding="utf-8")
+    (tmp_path / "Demo.train.inter").write_text(
+        "user_id:token\titem_id_list:token_seq\titem_id:token\n99\t70 0\t14\n", encoding="utf-8")
+    catalog = tmp_path / "catalog"
+    hierarchical_cli(["fit", "--method", method, "--branch-factor", "2", "--greedy-threshold", "5",
+                      "--data-path", str(tmp_path / "embeddings.npy"), "--item-ids", str(tmp_path / "ids.json"),
+                      "--dataset-name", "Demo", "--dataset-dir", str(tmp_path), "--output-dir", str(catalog)])
+    path = catalog / "Demo.index.json"
+    index = json.loads(path.read_text(encoding="utf-8"))
+    report = validate_index(path, local_tokenizer())
+    assert report["adjacent_sid_encodings_checked"] == len(ids)
+    assert report["dataset_contract"]["mapped_items"] == len(ids)
+    assert report["invalid_prefix_forces_eos"]
+
+    converted = tmp_path / "converted"
+    script = Path(__file__).resolve().parents[2] / "convert_dataset.py"
+    subprocess.run([sys.executable, str(script), "--data_dir", str(catalog), "--dataset_name", "Demo",
+                    "--output_dir", str(converted)], check=True)
+    with next((converted / "train").glob("*.csv")).open(encoding="utf-8", newline="") as handle:
+        row, = csv.DictReader(handle)
+    assert row["user_id"] == "A99"
+    assert row["item_id"] == "14" and row["item_sid"] == "".join(index["14"])
+    assert ast.literal_eval(row["history_item_sid"]) == ["".join(index[key]) for key in ("70", "0")]
 
 
 if __name__ == "__main__":

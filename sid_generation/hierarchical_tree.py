@@ -20,17 +20,45 @@ import numpy as np
 from .sid_common import canonical_item_ids, index_statistics, positive_int, vectors
 
 
-ALGORITHM = "balanced_hierarchical_kmeans"
-ALGORITHM_VERSION = "1.0.0"
-TREE_FORMAT_VERSION = 1
+ALGORITHM = "hierarchical_kmeans"
+ALGORITHM_VERSION = "2.0.0"
+TREE_FORMAT_VERSION = 2
 CATALOG_HASH_RULE = "lexicographic string IDs; compact UTF-8 JSON [IDs, shape]; little-endian float64 values"
+LEGACY_CONFIG_KEYS = {"branch_factor", "seed", "n_init", "max_iter", "tol", "n_jobs"}
+STRATEGY_DEFAULTS = {"method": "balanced", "greedy_threshold": 2000, "greedy_n_init": 5, "greedy_max_iter": 20}
+CONFIG_KEYS = LEGACY_CONFIG_KEYS | STRATEGY_DEFAULTS.keys()
+SPLIT_BACKENDS = {"constrained": "k_means_constrained.KMeansConstrained", "greedy": "sklearn.cluster.KMeans"}
 
 
-def validate_config(config):
-    """Return the normalized supported clustering configuration."""
+def artifact_version(payload, *, manifest=False):
+    """Read the identity as written; v1 manifests alone omitted format_version."""
+    if not isinstance(payload, dict):
+        raise ValueError("expected a hierarchical artifact object")
+    version = payload.get("format_version", 1 if manifest else None)
+    if type(version) is int:
+        identity = payload.get("algorithm"), payload.get("algorithm_version")
+        if version == 1 and identity == ("balanced_hierarchical_kmeans", "1.0.0"):
+            if not manifest or "format_version" not in payload:
+                return 1
+        if version == TREE_FORMAT_VERSION and identity == (ALGORITHM, ALGORITHM_VERSION):
+            return TREE_FORMAT_VERSION
+    raise ValueError("unsupported hierarchical format or algorithm version")
+
+
+def split_method(config, size):
+    """Resolve a nonterminal split independently for this node."""
+    if size <= config["branch_factor"]:
+        raise ValueError("terminal nodes do not use a split solver")
+    if config["method"] == "greedy" or (config["method"] == "hybrid" and size > config["greedy_threshold"]):
+        return "greedy"
+    return "constrained"
+
+
+def validate_config(config, format_version=TREE_FORMAT_VERSION):
+    """Validate precisely the keys and types of the specified schema."""
     if not isinstance(config, dict):
         raise ValueError("tree config must be an object")
-    required = {"branch_factor", "seed", "n_init", "max_iter", "tol", "n_jobs"}
+    required = LEGACY_CONFIG_KEYS if format_version == 1 else CONFIG_KEYS
     if set(config) != required:
         raise ValueError("tree config has missing or unsupported parameters")
     result = {
@@ -48,6 +76,14 @@ def validate_config(config):
     if not math.isfinite(float(tol)) or tol < 0:
         raise ValueError("tol must be a finite nonnegative number")
     result["tol"] = float(tol)
+    if format_version == TREE_FORMAT_VERSION:
+        method = config["method"]
+        if method not in ("balanced", "greedy", "hybrid"):
+            raise ValueError("method must be balanced, greedy, or hybrid")
+        result.update(method=method,
+                      greedy_threshold=positive_int(config["greedy_threshold"], "greedy_threshold", 0),
+                      greedy_n_init=positive_int(config["greedy_n_init"], "greedy_n_init"),
+                      greedy_max_iter=positive_int(config["greedy_max_iter"], "greedy_max_iter"))
     return result
 
 
@@ -101,6 +137,17 @@ def _unique_json_object(pairs):
             raise ValueError(f"duplicate JSON key: {key}")
         result[key] = value
     return result
+
+
+def parse_artifact_json(data):
+    def invalid_constant(value):
+        raise ValueError(f"invalid JSON constant: {value}")
+
+    return json.loads(data.decode("utf-8"), object_pairs_hook=_unique_json_object, parse_constant=invalid_constant)
+
+
+def read_artifact_json(path):
+    return parse_artifact_json(Path(path).read_bytes())
 
 
 class HierarchicalTree:
@@ -229,8 +276,14 @@ class HierarchicalTree:
         index = self.to_index()
         stats = index_statistics(index)
         levels = defaultdict(list)
+        split_counts = Counter({method: 0 for method in SPLIT_BACKENDS})
+        splits_by_depth = defaultdict(lambda: {method: 0 for method in SPLIT_BACKENDS})
         for node in self.nodes:
             levels[node["depth"]].append(node["size"])
+            if node["children"]:
+                method = split_method(self.config, node["size"])
+                split_counts[method] += 1
+                splits_by_depth[node["depth"]][method] += 1
         lengths = [len(tokens) for tokens in index.values()]
         paths = {tuple(tokens) for tokens in index.values()}
         prefix_collisions = sum(tuple(tokens[:length]) in paths
@@ -239,6 +292,9 @@ class HierarchicalTree:
             "items": len(self.item_ids),
             "embedding_dimension": self.dimension,
             "branch_factor": self.config["branch_factor"],
+            "method": self.config["method"],
+            "split_counts": dict(split_counts),
+            "split_counts_by_depth": {str(d): counts for d, counts in sorted(splits_by_depth.items())},
             "cluster_nodes": len(self.nodes),
             "split_nodes": sum(bool(node["children"]) for node in self.nodes),
             "terminal_clusters": sum(not node["children"] for node in self.nodes),
@@ -303,16 +359,19 @@ class HierarchicalTree:
 
     @classmethod
     def load(cls, path):
-        with Path(path).open(encoding="utf-8") as handle:
-            payload = json.load(handle, object_pairs_hook=_unique_json_object,
-                                parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"invalid JSON constant: {value}")))
+        return cls.from_dict(read_artifact_json(path))
+
+    @classmethod
+    def from_dict(cls, payload):
         fields = {"format_version", "algorithm", "algorithm_version", "catalog_hash_rule",
                   "catalog_hash", "dimension", "config", "item_ids", "nodes"}
         if not isinstance(payload, dict) or set(payload) != fields:
             raise ValueError("tree file has missing or unexpected fields")
-        if (type(payload["format_version"]) is not int or payload["format_version"] != TREE_FORMAT_VERSION
-                or payload["algorithm"] != ALGORITHM or payload["algorithm_version"] != ALGORITHM_VERSION
-                or payload["catalog_hash_rule"] != CATALOG_HASH_RULE):
-            raise ValueError("unsupported hierarchical tree format or algorithm version")
+        version = artifact_version(payload)
+        if payload["catalog_hash_rule"] != CATALOG_HASH_RULE:
+            raise ValueError("unsupported catalog hash rule")
+        config = validate_config(payload["config"], version)
+        if version == 1:
+            config.update(STRATEGY_DEFAULTS)
         return cls(nodes=payload["nodes"], item_ids=payload["item_ids"], dimension=payload["dimension"],
-                   catalog_hash=payload["catalog_hash"], config=payload["config"])
+                   catalog_hash=payload["catalog_hash"], config=config)
