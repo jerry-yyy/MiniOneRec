@@ -1,12 +1,12 @@
 # Hierarchical K-Means validation
 
-The implementation was independently validated on macOS ARM64.
+Validated on macOS ARM64.
 
 | Test selection | Passed | Failed | Skipped | Errors |
 | --- | ---: | ---: | ---: | ---: |
 | Hierarchical K-Means, all three strategies | 169 | 0 | 0 | 0 |
 | Upstream regression tests, clean official baseline | 81 | 0 | 0 | 0 |
-| Same upstream regression tests, PR candidate | 81 | 0 | 0 | 0 |
+| Same upstream regression tests, feature branch | 81 | 0 | 0 | 0 |
 
 All three pytest commands exited with status 0. The upstream runs matched on
 all 81 test identifiers and outcomes, including eight publication tests and
@@ -66,7 +66,7 @@ tree structure. Recommendation quality and model training are outside this scope
 
 ## Reproducing the checks
 
-From the candidate repository root, activate the Python 3.12 environment in
+From the repository root, activate the Python 3.12 environment in
 the [installation guide](HIERARCHICAL_KMEANS.md#installation). Install the
 test stack there and keep the same interpreter active for both checkouts.
 
@@ -98,8 +98,8 @@ run_upstream
 (cd ../minionerec-baseline && run_upstream)
 ```
 
-To reproduce the real-catalog fits and diagnosis from the candidate, the
-preparation helper verifies the pinned inputs and writes the explicit row map.
+To reproduce the real-catalog fits and diagnosis, run the preparation helper
+to verify the pinned inputs and write the explicit row map.
 Use `--offline` if the verified source cache is already populated. Run each
 method with a fresh output directory.
 

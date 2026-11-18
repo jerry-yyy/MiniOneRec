@@ -22,7 +22,7 @@ vectors**, with no normalization or residual subtraction. For
 
 | Method | How a nonterminal node splits |
 | --- | --- |
-| `balanced` | SEATER Algorithm 1. Fit `KMeansConstrained` with `size_min=q` and `size_max=q+1`. Use this to reproduce the original Balanced candidate. |
+| `balanced` | SEATER Algorithm 1. Fit `KMeansConstrained` with `size_min=q` and `size_max=q+1`. This is the original Balanced implementation. |
 | `greedy` | Fit ordinary scikit-learn K-Means to the node with k-means++ initialization and Lloyd iterations. Compute all N×K squared Euclidean distances. Visit candidates in global ascending order of (distance, item position, original centroid index). Assign an unassigned item only if that centroid still has room. The first r original centroids have capacity q+1. Stop when all items are assigned. There is one capacity pass, with no subsequent centroid refit. |
 | `hybrid` | Apply greedy if this node has `N > greedy_threshold`. Use constrained otherwise. At the default threshold a 2,000-item node uses constrained. Siblings can select different solvers. |
 
@@ -36,8 +36,8 @@ candidate order and node-local test; the paper describes a nearest-available
 assignment and summarizes the switch by level. The trainer sets the threshold
 to 0 for speedup and 2,000 for hybrid. The reference uses FAISS above 100
 items and scikit-learn for smaller nodes. Here every greedy split uses CPU
-scikit-learn, the configured seed and the supplied embeddings. Comparing
-identifiers byte-for-byte with the author's FAISS runs is outside this contract.
+scikit-learn, the configured seed and the supplied embeddings. Byte-for-byte
+reproduction of the authors' FAISS identifiers is not supported by this implementation.
 
 ## SID Representation
 
@@ -251,6 +251,15 @@ companions from the release CSVs' original-ID columns. Use `--offline` to
 revalidate existing downloads. Do not use converter
 sampling or `--keep_longest_only` when checking all source rows.
 
+Convert the dataset before starting supervised fine-tuning (SFT). In the
+`sft.py` command in `sft.sh`, point `--train_file` and `--eval_file` to the
+converted CSVs under `outputs/hierarchical-converted/train/` and
+`outputs/hierarchical-converted/valid/`, respectively. Use the same catalog
+for `--sid_index_path outputs/hierarchical/MyCatalog.index.json` and
+`--item_meta_path outputs/hierarchical/MyCatalog.item.json`. The hierarchical
+K-Means validation did not run SFT. For the full training setup, see the
+[MiniOneRec SFT guide](../README.md#4-sft).
+
 `validate_hierarchical_integration.py` checks the actual TokenExtender,
 dataset methods, evaluator callbacks and CPU prefix masks without loading
 model weights. `benchmark_hierarchical.py` can run additional benchmarks on
@@ -308,17 +317,17 @@ WCSS recomputed around the final child means; WCSS never changes an assignment.
   and Contrastive Learning*, SIGIR-AP 2024.
   [DOI: 10.1145/3673791.3698408](https://doi.org/10.1145/3673791.3698408).
   [Paper Algorithm 1 and section 3.2.2](https://arxiv.org/pdf/2309.13375v2).
-- [Official SEATER repository](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/tree/b12cd29585720f891b1a8f41dacec5e0554fac6f),
-  audited revision `b12cd29585720f891b1a8f41dacec5e0554fac6f`;
-  [balanced tree builder](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/blob/b12cd29585720f891b1a8f41dacec5e0554fac6f/utils/build_tree.py).
+- Original SEATER, referenced commit `b12cd29585720f891b1a8f41dacec5e0554fac6f`.
+  [Official SEATER repository](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/tree/b12cd29585720f891b1a8f41dacec5e0554fac6f)
+  and [balanced tree builder](https://github.com/Ethan00Si/SEATER_Generative_Retrieval/blob/b12cd29585720f891b1a8f41dacec5e0554fac6f/utils/build_tree.py).
 - Valeau et al., *Efficient Optimization of Hierarchical Identifiers for
   Generative Recommendation*. [Re-SEATER paper, version 2](https://arxiv.org/html/2512.18434v2).
-  Source semantics were checked at revision `32235415e5abc1fa97d0516199422b5d9a34471b`.
+  Re-SEATER, referenced commit `32235415e5abc1fa97d0516199422b5d9a34471b`.
   [Greedy assignment and recursive construction](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/utils/build_tree_speedup.py)
   and [trainer selection](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/SEATER_Generative_Retrieval/trainer.py).
 
-The audited original SEATER revision has no explicit software license. The
-audited Re-SEATER revision uses Apache-2.0. [Re-SEATER LICENSE at the cited revision](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/LICENSE)
+At the referenced commits, the original SEATER repository has no explicit
+software license and Re-SEATER uses Apache-2.0. [Re-SEATER LICENSE](https://github.com/joshrosie/re-seater/blob/32235415e5abc1fa97d0516199422b5d9a34471b/LICENSE)
 
 MiniOneRec independently implements SEATER's Balanced tree construction and
 Re-SEATER's Greedy and Hybrid strategies without copying or directly porting
